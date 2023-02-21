@@ -1,0 +1,236 @@
+							                                  ----------------------Source Table------------
+
+=======================================================================================================================================================================
+
+create table emp(emp_id int(10) not null, name varchar(255) not null, dep varchar(250),salary int(10),location varchar(255),prev_location varchar(255) null);
+
+
+
+						                                   	--------------------History Table------------
+========================================================================================================================================================================
+
+
+
+CREATE TABLE emp_hist (
+  surrogate_key INT NULL,
+  emp_id INT(10) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  dep VARCHAR(250),
+  salary INT(10),
+  location VARCHAR(255),  
+  prev_location VARCHAR(255) NULL,
+  st_date DATETIME,
+  end_date DATETIME,
+  indicator CHAR(3)
+);
+
+
+		               	-----------------------------------------Insert data into the hist table------------------------------------------
+=======================================================================================================================================================================
+
+
+
+CREATE TRIGGER trig_type1
+AFTER INSERT ON emp
+FOR EACH ROW
+INSERT INTO emp_hist(emp_id,name,dep,salary,location,st_date,end_date,indicator)
+VALUES(NEW.emp_id,NEW.name,NEW.dep,NEW.salary,NEW.location,NOW(),NULL,'Y');
+
+							
+			             ----------------------------------------------Apply The Surrogate_key-------------------------------------------------
+=======================================================================================================================================================================
+
+
+
+
+DELIMITER $$
+CREATE TRIGGER reset_surrogate_key
+BEFORE INSERT ON emp_hist
+FOR EACH ROW
+BEGIN
+  DECLARE max_surrogate_key INT;
+  DECLARE max_emp_id INT;
+  SELECT MAX(surrogate_key), MAX(emp_id) INTO max_surrogate_key, max_emp_id FROM emp_hist WHERE emp_id = NEW.emp_id;
+  IF max_emp_id IS NULL THEN
+    SET max_emp_id = 0;
+  END IF;
+  IF max_surrogate_key IS NULL THEN
+    SET max_surrogate_key = 0;
+  END IF;
+  IF max_emp_id = NEW.emp_id THEN
+    SET NEW.surrogate_key = max_surrogate_key + 1;
+  ELSE
+    SET NEW.surrogate_key = 1;
+  END IF;
+END$$
+DELIMITER ;
+
+			                                --------------------------------------Implimenting The SCD Type 1-----------------------------------
+=======================================================================================================================================================================
+
+
+
+
+DELIMITER $$
+CREATE TRIGGER type1
+AFTER UPDATE ON emp
+FOR EACH ROW
+BEGIN
+  IF OLD.name != NEW.name THEN
+    UPDATE emp_hist SET name = NEW.name WHERE emp_id = OLD.emp_id;
+  END IF;
+END $$
+DELIMITER ;
+
+		                            	-----------------------------------------Implementing The SCD TYPE 2-----------------------------------
+=======================================================================================================================================================================
+
+
+
+
+
+DELIMITER $$
+CREATE TRIGGER update_salary
+AFTER update ON emp
+FOR EACH ROW
+BEGIN
+  if new.salary != old.salary then
+    INSERT INTO emp_hist (emp_id,name,dep,salary,location,st_date, end_date,indicator)
+    VALUES (new.emp_id,new.name,new.dep,new.salary,new.location,now(),null,"Y" ); 
+  end if;
+END $$
+DELIMITER ;
+
+DELIMITER $$
+CREATE TRIGGER tri_hist_indi
+AFTER update ON emp
+FOR EACH ROW
+BEGIN
+if new.salary != old.salary then
+  UPDATE emp_hist
+  SET end_date = st_date-1, indicator = 'N'
+  WHERE emp_id = OLD.emp_id AND  new.salary != old.salary AND indicator="Y"; 
+end if;
+END $$
+DELIMITER ;
+
+
+		                           	--------------------------------------Implementing the SCD type Three--------------------------------
+=======================================================================================================================================================================
+
+
+
+
+DELIMITER $$
+CREATE TRIGGER location_up
+AFTER UPDATE ON emp
+FOR EACH ROW
+BEGIN
+IF OLD.location!=NEW.location THEN
+	UPDATE emp_hist SET location=new.location,prev_location=old.location WHERE emp_id=NEW.emp_id;
+END IF;
+END $$
+DELIMITER ;
+
+
+DELIMITER $$
+CREATE TRIGGER location_access
+BEFORE INSERT ON emp_hist
+FOR EACH ROW
+BEGIN
+  DECLARE pre varchar(20);
+  DECLARE max_emp_id INT;
+  SELECT  prev_location,MAX(emp_id) INTO pre,max_emp_id FROM emp_hist WHERE emp_id = NEW.emp_id;
+  IF max_emp_id = NEW.emp_id THEN
+  SET NEW.prev_location = pre;
+  END IF;
+END$$
+DELIMITER ;
+
+
+
+				               	--------------------------------------OUTPUT:-------------------------------------
+
+
+mysql> insert into emp(emp_id,name,dep,salary,location)values(1,"mani","devops",45000,"hyd");
+Query OK, 1 row affected (0.01 sec)
+
+mysql> select * from emp;
++--------+------+--------+--------+----------+---------------+
+| emp_id | name | dep    | salary | location | prev_location |
++--------+------+--------+--------+----------+---------------+
+|      1 | mani | devops |  45000 | hyd      | NULL          |
++--------+------+--------+--------+----------+---------------+
+1 row in set (0.00 sec)
+
+
+mysql> select * from emp_hist;
++---------------+--------+------+--------+--------+----------+---------------+---------------------+----------+-----------+
+| surrogate_key | emp_id | name | dep    | salary | location | prev_location | st_date             | end_date | indicator |
++---------------+--------+------+--------+--------+----------+---------------+---------------------+----------+-----------+
+|             1 |      1 | mani | devops |  45000 | hyd      | NULL          | 2023-02-21 17:28:18 | NULL     | Y         |
++---------------+--------+------+--------+--------+----------+---------------+---------------------+----------+-----------+
+1 row in set (0.00 sec)
+
+                    ============================================ TYPE-1 SCD ===============================================
+                    
+  mysql> update emp set name = "Mani Kumar" where emp_id=1;
+Query OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> select * from emp_hist;
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+----------+-----------+
+| surrogate_key | emp_id | name       | dep    | salary | location | prev_location | st_date             | end_date | indicator |
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+----------+-----------+
+|             1 |      1 | Mani Kumar | devops |  45000 | hyd      | NULL          | 2023-02-21 17:28:18 | NULL     | Y         |
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+----------+-----------+
+1 row in set (0.00 sec)
+
+                  ========================================= TYPE-2 SCD ============================================================
+
+
+mysql> update emp set salary=50000 where emp_id=1;
+Query OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> select * from emp_hist;
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+---------------------+-----------+
+| surrogate_key | emp_id | name       | dep    | salary | location | prev_location | st_date             | end_date            | indicator |
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+---------------------+-----------+
+|             1 |      1 | Mani Kumar | devops |  45000 | hyd      | NULL          | 2023-02-21 17:28:18 | 2023-02-21 17:28:17 | N         |
+|             2 |      1 | Mani Kumar | devops |  50000 | hyd      | NULL          | 2023-02-21 17:35:46 | NULL                | Y         |
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+---------------------+-----------+
+2 rows in set (0.00 sec)
+
+
+
+                  ========================================= TYPE-3 SCD ===========================================================
+                 
+
+
+
+mysql> update emp set location="vizag" where emp_id=1;
+Query OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> select * from emp_hist;
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+---------------------+-----------+
+| surrogate_key | emp_id | name       | dep    | salary | location | prev_location | st_date             | end_date            | indicator |
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+---------------------+-----------+
+|             1 |      1 | Mani Kumar | devops |  45000 | vizag    | hyd           | 2023-02-21 17:28:18 | 2023-02-21 17:28:17 | N         |
+|             2 |      1 | Mani Kumar | devops |  50000 | vizag    | hyd           | 2023-02-21 17:35:46 | NULL                | Y         |
++---------------+--------+------------+--------+--------+----------+---------------+---------------------+---------------------+-----------+
+2 rows in set (0.00 sec)
+
+
+
+mysql> select * from emp_hist;
++---------------+--------+--------------+---------+--------+----------+---------------+---------------------+---------------------+-----------+
+| surrogate_key | emp_id | name         | dep     | salary | location | prev_location | st_date             | end_date            | indicator |
++---------------+--------+--------------+---------+--------+----------+---------------+---------------------+---------------------+-----------+
+|             1 |      1 | Mani Kumar N | devops  |  45000 | vizag    | hyd           | 2023-02-21 17:28:18 | 2023-02-21 17:28:17 | N         |
+|             2 |      1 | Mani Kumar N | devops  |  50000 | vizag    | hyd           | 2023-02-21 17:35:46 | 2023-02-21 17:35:45 | N         |
+|             3 |      1 | Mani Kumar N | devops  |  55000 | vizag    | hyd           | 2023-02-21 17:42:28 | NULL                | Y         |
+|             1 |      2 | siva         | Analyst |  55000 | Tpt      | NULL          | 2023-02-21 17:44:06 | NULL                | Y         |
++---------------+--------+--------------+---------+--------+----------+---------------+---------------------+---------------------+-----------+
+4 rows in set (0.00 sec)
